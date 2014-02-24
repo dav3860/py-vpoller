@@ -73,6 +73,7 @@ class VSphereAgent(VConnector):
             'hostname':   (types.StringType, types.UnicodeType),
             'name':       (types.StringType, types.UnicodeType, types.NoneType),
             'properties': (types.TupleType,  types.ListType, types.NoneType),
+            'counters': (types.TupleType,  types.ListType, types.NoneType),
             }
         
         if not all (k in msg for k in attr):
@@ -266,14 +267,78 @@ class VSphereAgent(VConnector):
             return { 'success': -1, 'msg': 'Cannot get property for Virtual Machine %s: %s' % (msg['name'], e) }
 
         ps = result.get_element_propSet()
-        
+                 
         result = { "success": 0,
                    "msg": "Successfully retrieved properties",
                    "result": {p.Name:p.Val for p in ps},
                    }
-        
+
         return result
-    
+
+    def get_vm_counter(self, msg):
+        """
+        Get performance counters of an object of type VirtualMachine and return it.
+
+        Example client message to get a VM property could be:
+
+            {
+                "method":     "vm.get",
+                "hostname":   "vc01-test.example.org",
+                "name":       "vm01.example.org",
+                "counters": [
+                    "cpu.system",
+                    "mem.zipped"
+                ]
+            }
+        
+        Args:
+            msg (dict): The client message to process
+
+        """
+
+        #
+        # TODO: Handle collection objects as part of the returned result
+        # 
+
+        if not self.msg_is_okay(msg, ('method', 'hostname', 'name', 'counters')):
+            return { "success": -1, "msg": "Incorrect or missing message properties" }
+
+        #
+        # Counter names we want to retrieve about the VirtualMachine object plus
+        # any other user-requested properties.
+        #
+        counter_names = ['config.name']
+        counter_names.extend(msg['counters'])
+
+        logging.info('[%s] Retrieving %s for Virtual Machine %s', self.hostname, msg['counters'], msg['name'])
+
+        self.update_vm_mors()
+        mor = self.mors_cache['VirtualMachine']['objects'].get(msg['name'])
+
+        if not mor:
+            return { 'success': -1, 'msg': 'Unable to find Virtual Machine %s' % msg['name'] }
+
+        pm = self.viserver.get_performance_manager()
+            
+        try:
+            result = pm.get_entity_statistic(mor, counter_names)
+        except Exception as e:
+            logging.warning('Cannot get counter for Virtual Machine %s: %s', msg['name'], e)
+            return { 'success': -1, 'msg': 'Cannot get counter for Virtual Machine %s: %s' % (msg['name'], e) }
+
+        ctrs = []
+        for counter in result:
+            name = counter.group + "." + counter.counter
+            ctrs.append({"Name": name, "Value": counter.value})
+
+        result = { "success": 0,
+                   "msg": "Successfully retrieved counters",
+                   "result": ctrs,
+                   }
+
+	logging.debug(result)        
+        return result
+        
     def get_datacenter_property(self, msg):
         """
         Get property of an object of type Datacenter and return it.
